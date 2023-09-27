@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const TEST_FILE_URL = "https://ispindex.s3.eu-west-2.amazonaws.com/testsfiles/10MB.zip"
-
 type DownloadTest struct{}
 
 type DownloadTestResult struct {
@@ -22,7 +20,7 @@ type DownloadTestResult struct {
 	Ping          float64
 }
 
-func GetHostIP() (string, error) {
+func (d *DownloadTest) GetHostIP() (string, error) {
 	address, err := net.InterfaceAddrs()
 	if err != nil {
 		return "", err
@@ -39,7 +37,7 @@ func GetHostIP() (string, error) {
 	return "", nil
 }
 
-func WriteResultToFile(result DownloadTestResult) error {
+func (d *DownloadTest) WriteResultToFile(result DownloadTestResult) error {
 	file, err := os.OpenFile("result.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open result.csv: %s", err)
@@ -65,8 +63,9 @@ func WriteResultToFile(result DownloadTestResult) error {
 }
 
 func (d *DownloadTest) Run() (DownloadTestResult, error) {
+	TEST_FILE_URL := "https://ispindex.s3.eu-west-2.amazonaws.com/testsfiles/10MB.zip"
 	timestamp := time.Now().Format(time.RFC3339)
-	hostIP, _ := GetHostIP()
+	hostIP, _ := d.GetHostIP()
 	result := DownloadTestResult{
 		Timestamp:   timestamp,
 		HostIP:      hostIP,
@@ -96,7 +95,7 @@ func (d *DownloadTest) Run() (DownloadTestResult, error) {
 	result.DownloadSpeed = speedMbps
 	result.Ping = float64(ping)
 
-	err = WriteResultToFile(result)
+	err = d.WriteResultToFile(result)
 	if err != nil {
 		return result, err
 	}
