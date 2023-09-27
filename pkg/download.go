@@ -10,7 +10,60 @@ import (
 	"time"
 )
 
-type DownloadTest struct{}
+type Downloader interface {
+	Download(url string) (response *http.Response, err error)
+}
+
+type HostIPGetter interface {
+	GetHostIP() (string, error)
+}
+
+type Writer interface {
+	Write(record []string) error
+}
+
+type TimeProvider interface {
+	Now() time.Time
+}
+
+type RealDownloader struct{}
+
+type RealHostIPGetter struct{}
+
+func (rd *RealDownloader) Download(url string) (*http.Response, error) {
+	return http.Get(url)
+}
+
+type RealWriter struct {
+	file *os.File
+}
+
+func NewRealWriter(filename string) (*RealWriter, error) {
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	return &RealWriter{file: file}, nil
+}
+
+func (rw *RealWriter) Write(record []string) error {
+	writer := csv.NewWriter(rw.file)
+	defer writer.Flush()
+	return writer.Write(record)
+}
+
+type RealTimeProvider struct{}
+
+func (rtp *RealTimeProvider) Now() time.Time {
+	return time.Now()
+}
+
+type DownloadTest struct {
+	downloader   Downloader
+	writer       Writer
+	timeProvider TimeProvider
+	hostIPGetter HostIPGetter
+}
 
 type DownloadTestResult struct {
 	Timestamp     string
@@ -20,7 +73,20 @@ type DownloadTestResult struct {
 	Ping          float64
 }
 
-func (d *DownloadTest) GetHostIP() (string, error) {
+func NewDownloader() *RealDownloader {
+	return &RealDownloader{}
+}
+
+func NewDownloadTest(downloader Downloader, writer Writer, timeProvider TimeProvider, ipGetter HostIPGetter) *DownloadTest {
+	return &DownloadTest{
+		downloader:   downloader,
+		writer:       writer,
+		timeProvider: timeProvider,
+		hostIPGetter: ipGetter,
+	}
+}
+
+func (d *RealHostIPGetter) GetHostIP() (string, error) {
 	address, err := net.InterfaceAddrs()
 	if err != nil {
 		return "", err
@@ -38,15 +104,6 @@ func (d *DownloadTest) GetHostIP() (string, error) {
 }
 
 func (d *DownloadTest) WriteResultToFile(result DownloadTestResult) error {
-	file, err := os.OpenFile("result.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open result.csv: %s", err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
 	record := []string{
 		result.Timestamp,
 		result.HostIP,
@@ -54,26 +111,21 @@ func (d *DownloadTest) WriteResultToFile(result DownloadTestResult) error {
 		fmt.Sprintf("%.2f", result.DownloadSpeed),
 		fmt.Sprintf("%.2f", result.Ping),
 	}
-
-	if err := writer.Write(record); err != nil {
-		return fmt.Errorf("failed to write record to result.csv: %s", err)
-	}
-
-	return nil
+	return d.writer.Write(record)
 }
 
 func (d *DownloadTest) Run() (DownloadTestResult, error) {
 	TEST_FILE_URL := "https://ispindex.s3.eu-west-2.amazonaws.com/testsfiles/10MB.zip"
-	timestamp := time.Now().Format(time.RFC3339)
-	hostIP, _ := d.GetHostIP()
+	timestamp := d.timeProvider.Now().Format(time.RFC3339)
+	hostIP, _ := d.hostIPGetter.GetHostIP()
 	result := DownloadTestResult{
 		Timestamp:   timestamp,
 		HostIP:      hostIP,
 		NetworkName: "Unknown Network",
 	}
-	startTime := time.Now()
+	startTime := d.timeProvider.Now()
 
-	response, err := http.Get(TEST_FILE_URL)
+	response, err := d.downloader.Download(TEST_FILE_URL)
 	if err != nil {
 		return result, err
 	}
@@ -89,7 +141,6 @@ func (d *DownloadTest) Run() (DownloadTestResult, error) {
 	fileSizeInBytes := float64(response.ContentLength)
 
 	speedInBytesPerSecond := fileSizeInBytes / elaspedTime
-
 	speedMbps := (speedInBytesPerSecond * 8) / 1_000_000
 
 	result.DownloadSpeed = speedMbps
